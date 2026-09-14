@@ -1,0 +1,45 @@
+# Reusable: dependency vulnerability scan across the polyglot repo.
+#   - Node services : npm audit   (lockfile generated on the fly, none is committed)
+#   - Python service: pip-audit   (from class example 16-dependencyscan.yaml)
+# ADVISORY: findings are reported but do not fail the pipeline (|| true).
+#   * Remove "|| true" (and keep --audit-level=high) to make these blocking gates.
+name: Reusable - Dependency Scan
+
+on:
+  workflow_call:
+
+jobs:
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [frontend, user-service, task-service, notification-service]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: npm audit (${{ matrix.service }})
+        working-directory: ${{ matrix.service }}
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          npm audit --audit-level=high || true
+
+  pip-audit:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install pip-audit
+        run: pip install pip-audit
+      - name: Audit analytics-service dependencies for CVEs
+        run: pip-audit -r analytics-service/requirements.txt || true

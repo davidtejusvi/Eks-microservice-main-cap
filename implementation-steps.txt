@@ -1,0 +1,140 @@
+Step 1 : create an EKS cluster by using `eksctl` or use the Terraform code and create the cluster. 
+
+Step 2 : Pick the GitHub repo immutable URL and add it to the AWS IAM role's trust policy for OIDC. Also pick the same role and add it to EKS cluster access entries. 
+
+Step 3 : add the required secrets to our GitHub repository. Below are the secrets:
+- AWS account ID
+- AWS role ARN
+- EKS cluster name
+- Sonar token
+
+Make sure your Sonar Cloud has access to the new repository via a GitHub application.
+
+
+step 4 : authenticate to your ECR service by using the below command. Replace account ID with your own account ID. Also change the region if required. 
+
+aws ecr get-login-password --region ap-south-1 | docker login --username AWS --password-stdin 992189742322.dkr.ecr.ap-south-1.amazonaws.com
+
+---
+
+Step 5 : prepare images and push all these images into the AWS ECR service. 
+Technically we need five repos. 
+- frontend
+- user-service
+- task-service
+- notification-service
+- analytics-service
+
+aws ecr create-repository --repository-name task-management/frontend --region ap-south-1
+aws ecr create-repository --repository-name task-management/user-service --region ap-south-1
+aws ecr create-repository --repository-name task-management/task-service --region ap-south-1
+aws ecr create-repository --repository-name task-management/notification-service --region ap-south-1
+aws ecr create-repository --repository-name task-management/analytics-service --region ap-south-1
+
+
+export ACCOUNT_ID=992189742322
+export REGION=ap-south-1
+export REGISTRY=$ACCOUNT_ID.dkr.ecr.$REGION.amazonaws.com
+
+
+docker buildx build --platform linux/amd64 --push -t $REGISTRY/task-management/frontend:latest ./frontend
+
+docker buildx build --platform linux/amd64 --push -t $REGISTRY/task-management/user-service:latest ./user-service
+
+docker buildx build --platform linux/amd64 --push -t $REGISTRY/task-management/task-service:latest ./task-service
+
+docker buildx build --platform linux/amd64 --push -t $REGISTRY/task-management/notification-service:latest ./notification-service
+
+docker buildx build --platform linux/amd64 --push -t $REGISTRY/task-management/analytics-service:latest ./analytics-service
+
+=============
+
+Step 6 : deploy ingress controller to deliver our entire application to the outside world. 
+
+6.1 : Use the shared iam_policy.json document and create an IAM policy in your AWS account. Name the policy as "AWSLoadBalancerControllerIAMPolicy"
+
+aws iam create-policy --policy-name AWSLoadBalancerControllerIAMPolicy --policy-document file://iam_policy.json
+
+arn:aws:iam::992189742322:policy/AWSLoadBalancerControllerIAMPolicy
+
+
+6.2 : Create an Service account (IRSA - IAM Role for Service Account)
+
+eksctl create iamserviceaccount --cluster=ekswithavinash --namespace=kube-system --name=aws-load-balancer-controller --attach-policy-arn=arn:aws:iam::992189742322:policy/AWSLoadBalancerControllerIAMPolicy --override-existing-serviceaccounts --region ap-south-1 --approve
+
+kubectl get sa -n kube-system
+kubectl describe sa aws-load-balancer-controller -n kube-system
+
+6.3 : Add helm chart and install with IRSA we created at step 2
+
+helm repo add eks http://aws.github.io/eks-charts
+helm repo update eks
+
+
+6.4 : Install the helm chart, Make sure to pass the IRSA while installing
+
+helm install aws-load-balancer-controller eks/aws-load-balancer-controller -n kube-system --set clusterName=ekswithavinash --set serviceAccount.create=false --set serviceAccount.name=aws-load-balancer-controller
+
+
+-------
+
+Step 7 : create an IAM role for a service account for the notification service that can assume the SES service to send alerts. 
+
+7.1 the service account should be in the same namespace as the notification service. 
+
+kubectl create ns task-management
+
+7.2 Create service account
+
+eksctl create iamserviceaccount --cluster=ekswithavinash --namespace=task-management --name=notification-service-sa --attach-policy-arn=arn:aws:iam::aws:policy/AmazonSESFullAccess --override-existing-serviceaccounts --region ap-south-1 --approve
+
+kubectl describe sa notification-service-sa -n task-management
+
+eks.amazonaws.com/role-arn: arn:aws:iam::992189742322:role/eksctl-ekswithavinash-addon-iamserviceaccount-Role1-EUO6Wa3jzliZ
+
+7.3 our accounts will be in sandbox mode for SES as we are on the free plan so create some identities, at least two email IDs. We can use that as a sender and receiver in our task management application. 
+
+7.4 Update your email id in notification service manifest file. 
+
+=============================
+
+8. Deploy the initial components on EKS
+
+namespace
+configmap
+Secrets
+
+mongodb
+postgres
+redis
+
+user
+task
+notification
+analytical
+frontend
+
+kubectl apply -k k8s/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

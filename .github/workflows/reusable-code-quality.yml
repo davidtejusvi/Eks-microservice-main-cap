@@ -1,0 +1,45 @@
+# Reusable: code quality + SAST across the polyglot repo.
+#   - Python analytics-service : flake8 (lint) + bandit (SAST)   [class ex. 17]
+#   - Node backend services    : ESLint (eslint.config.mjs at repo root)
+# ADVISORY: findings are reported but do not fail the pipeline (|| true).
+#   * Remove "|| true" to make these blocking gates.
+#   * flake8 line-length is relaxed; bandit runs at -ll (medium+).
+name: Reusable - Code Quality (SAST)
+
+on:
+  workflow_call:
+
+jobs:
+  python-quality:
+    name: flake8 + bandit
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.12']
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies and tools
+        run: |
+          pip install -r analytics-service/requirements.txt
+          pip install flake8 bandit
+      - name: flake8 lint
+        run: flake8 analytics-service --count --max-line-length=120 --extend-ignore=E501,W503,E203 || true
+      - name: bandit SAST scan
+        run: bandit -r analytics-service -ll || true
+
+  node-quality:
+    name: eslint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install ESLint
+        run: npm install --no-save eslint@9 @eslint/js@9
+      - name: Run ESLint on backend services
+        run: npx eslint . || true

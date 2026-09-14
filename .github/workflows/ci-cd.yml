@@ -1,0 +1,239 @@
+# =============================================================================
+#  CI/CD pipeline : GitHub Actions -> ECR -> EKS
+# -----------------------------------------------------------------------------
+#  Stage order (this file is the orchestrator, like class example 18).
+#  Security/quality gates run in ADVISORY mode — they report findings but do
+#  not fail the run. Each reusable file documents the one-line knob to make it
+#  a blocking gate:
+#     1. secrets-scan     gitleaks                       [reusable]
+#     2. dependency-scan  npm audit + pip-audit          [reusable]
+#     3. code-quality     flake8 + bandit + ESLint (SAST)[reusable]
+#     4. detect-changes   path filter — only rebuild what changed
+#     5. build-push       build -> Trivy scan (blocking) -> push to ECR
+#     6. deploy           kustomize image pin -> kubectl apply -> rollout status
+#
+#  Required GitHub Secrets (Settings -> Secrets and variables -> Actions):
+#     AWS_ROLE_ARN      arn:aws:iam::655700896650:role/GHA-Role   (OIDC role)
+#     AWS_ACCOUNT_ID    655700896650
+#     EKS_CLUSTER_NAME  ekswithavinash
+#  Optional:
+#     GITLEAKS_LICENSE  (orgs only)     SONAR_TOKEN (see sonarcloud.yml)
+#
+# =============================================================================
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-south-1
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ---- 1. Security & quality gates (reusable workflows) ---------------------
+  secrets-scan:
+    uses: ./.github/workflows/reusable-secrets-scan.yml
+    secrets: inherit
+
+  dependency-scan:
+    uses: ./.github/workflows/reusable-dependency-scan.yml
+    secrets: inherit
+
+  code-quality:
+    uses: ./.github/workflows/reusable-code-quality.yml
+    secrets: inherit
+
+  # ---- 2. Work out which services actually changed --------------------------
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      user-service: ${{ steps.filter.outputs.user-service }}
+      task-service: ${{ steps.filter.outputs.task-service }}
+      notification-service: ${{ steps.filter.outputs.notification-service }}
+      analytics-service: ${{ steps.filter.outputs.analytics-service }}
+      k8s: ${{ steps.filter.outputs.k8s }}
+      any-service: ${{ steps.filter.outputs.any-service }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        env:
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
+        run: |
+          # Manual trigger (workflow_dispatch) or first push: build everything
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" || \
+                "$BEFORE" == "0000000000000000000000000000000000000000" ]]; then
+            echo "Manual trigger or first push — marking all services as changed"
+            for key in frontend user-service task-service notification-service analytics-service k8s any-service; do
+              echo "${key}=true" >> "$GITHUB_OUTPUT"
+            done
+            exit 0
+          fi
+
+          CHANGED=$(git diff --name-only "$BEFORE" "$SHA")
+          echo "Changed files:"
+          echo "$CHANGED"
+
+          has_changes() { echo "$CHANGED" | grep -q "^$1/" && echo "true" || echo "false"; }
+
+          FRONTEND=$(has_changes frontend)
+          USER_SVC=$(has_changes user-service)
+          TASK_SVC=$(has_changes task-service)
+          NOTIF_SVC=$(has_changes notification-service)
+          ANALYTICS=$(has_changes analytics-service)
+          K8S=$(has_changes k8s)
+
+          echo "frontend=${FRONTEND}"             >> "$GITHUB_OUTPUT"
+          echo "user-service=${USER_SVC}"         >> "$GITHUB_OUTPUT"
+          echo "task-service=${TASK_SVC}"         >> "$GITHUB_OUTPUT"
+          echo "notification-service=${NOTIF_SVC}" >> "$GITHUB_OUTPUT"
+          echo "analytics-service=${ANALYTICS}"  >> "$GITHUB_OUTPUT"
+          echo "k8s=${K8S}"                       >> "$GITHUB_OUTPUT"
+
+          if [[ "$FRONTEND" == "true" || "$USER_SVC" == "true" || "$TASK_SVC" == "true" || \
+                "$NOTIF_SVC" == "true" || "$ANALYTICS" == "true" ]]; then
+            echo "any-service=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "any-service=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ---- 3. Build changed services, Trivy-scan, then push to ECR --------------
+  build-push:
+    needs: [secrets-scan, dependency-scan, code-quality, detect-changes]
+    if: needs.detect-changes.outputs.any-service == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          mask-password: 'true'
+
+      - name: Install Trivy
+        run: |
+          curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Build, Trivy-scan and push changed services
+        run: |
+          REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          SHA="${{ github.sha }}"
+
+          build_scan_push() {
+            local SERVICE=$1
+            local IMG="${REGISTRY}/task-management/${SERVICE}"
+            echo "==> Building ${SERVICE}"
+            # --load so the image is available locally for Trivy before we push
+            docker buildx build \
+              --platform linux/amd64 \
+              --load \
+              -t "${IMG}:${SHA}" \
+              -t "${IMG}:latest" \
+              "./${SERVICE}"
+
+            echo "==> Trivy scan ${SERVICE} (advisory: HIGH,CRITICAL)"
+            # exit-code 0 = report only. Set --exit-code 1 to BLOCK pushes on
+            # HIGH/CRITICAL findings (allowlist accepted CVEs in .trivyignore).
+            trivy image \
+              --severity HIGH,CRITICAL \
+              --exit-code 0 \
+              --ignorefile .trivyignore \
+              "${IMG}:${SHA}"
+
+            echo "==> Pushing ${SERVICE}"
+            docker push "${IMG}:${SHA}"
+            docker push "${IMG}:latest"
+            echo "==> Pushed ${SERVICE}:${SHA}"
+          }
+
+          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]];             then build_scan_push frontend;             fi
+          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]];         then build_scan_push user-service;         fi
+          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]];         then build_scan_push task-service;         fi
+          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then build_scan_push notification-service; fi
+          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]];    then build_scan_push analytics-service;    fi
+
+  # ---- 4. Deploy to EKS -----------------------------------------------------
+  deploy:
+    needs: [detect-changes, build-push]
+    # Run when: services were built successfully OR only k8s manifests changed
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') &&
+      (needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.k8s == 'true')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: EKS-Deploy
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ secrets.EKS_CLUSTER_NAME }} \
+            --region ${{ env.AWS_REGION }}
+
+      - name: Set up Kustomize
+        run: |
+          curl -sfLo kustomize.tar.gz \
+            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
+          tar -xzf kustomize.tar.gz
+          sudo mv kustomize /usr/local/bin/
+
+      - name: Update image tags for changed services
+        run: |
+          REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          SHA="${{ github.sha }}"
+          cd k8s
+
+          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
+            kustomize edit set image task-management/frontend=${REGISTRY}/task-management/frontend:${SHA}
+          fi
+          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
+            kustomize edit set image task-management/user-service=${REGISTRY}/task-management/user-service:${SHA}
+          fi
+          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
+            kustomize edit set image task-management/task-service=${REGISTRY}/task-management/task-service:${SHA}
+          fi
+          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
+            kustomize edit set image task-management/notification-service=${REGISTRY}/task-management/notification-service:${SHA}
+          fi
+          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
+            kustomize edit set image task-management/analytics-service=${REGISTRY}/task-management/analytics-service:${SHA}
+          fi
+
+      - name: Apply to EKS
+        run: kubectl apply -k k8s/ --validate=false
+
+      - name: Verify rollouts
+        run: |
+          for SERVICE in frontend user-service task-service notification-service analytics-service; do
+            echo "==> Checking rollout: ${SERVICE}"
+            kubectl rollout status deployment/${SERVICE} -n task-management --timeout=180s
+          done
