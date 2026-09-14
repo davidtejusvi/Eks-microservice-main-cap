@@ -14,8 +14,8 @@
 #
 #  Required GitHub Secrets (Settings -> Secrets and variables -> Actions):
 #     AWS_ROLE_ARN      arn:aws:iam::655700896650:role/GHA-Role   (OIDC role)
-#     AWS_ACCOUNT_ID    655700896650
-#     EKS_CLUSTER_NAME  ekswithavinash
+#     AWS_ACCOUNT_ID    65570089****
+#     EKS_CLUSTER_NAME  ekswithdavid
 #  Optional:
 #     GITLEAKS_LICENSE  (orgs only)     SONAR_TOKEN (see sonarcloud.yml)
 #
