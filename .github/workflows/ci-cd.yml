@@ -29,10 +29,11 @@ on:
 
 env:
   AWS_REGION: ap-south-1
-
+  
 permissions:
   id-token: write
   contents: read
+
 
 jobs:
   # ---- 1. Security & quality gates (reusable workflows) ---------------------
@@ -112,6 +113,9 @@ jobs:
     needs: [secrets-scan, dependency-scan, code-quality, detect-changes]
     if: needs.detect-changes.outputs.any-service == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v7
 
