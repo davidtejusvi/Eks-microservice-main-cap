@@ -109,8 +109,9 @@ jobs:
           fi
 
   # ---- 3. Build changed services, Trivy-scan, then push to ECR --------------
-  build-push:
+    build-push:
     needs: [secrets-scan, dependency-scan, code-quality, detect-changes]
+
     if: |
       always() &&
       needs.detect-changes.result == 'success' &&
@@ -118,60 +119,24 @@ jobs:
       needs.secrets-scan.result == 'success' &&
       needs.dependency-scan.result == 'success' &&
       needs.code-quality.result == 'success'
+
     runs-on: ubuntu-latest
+
     permissions:
       id-token: write
       contents: read
+
     steps:
       - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-   
-
-      # ADDed OIDC
-      - name: Check OIDC and AWS role secret
-        env:
-          ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
-        run: |
-          if [ -z "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
-            echo "ERROR: GitHub OIDC token is not available"
-            exit 1
-          fi
-  
-          if [ -z "$ROLE_ARN" ]; then
-            echo "ERROR: AWS_ROLE_ARN secret is empty or unavailable"
-            exit 1
-          fi
-  
-          echo "GitHub OIDC token is available"
-          echo "AWS_ROLE_ARN secret is available"
-      - name: Debug GitHub OIDC context
-        run: |
-              echo "Repository: $GITHUB_REPOSITORY"
-              echo "Ref: $GITHUB_REF"
-              echo "Event: $GITHUB_EVENT_NAME"
-              echo "Workflow: $GITHUB_WORKFLOW"
-              echo "Job: $GITHUB_JOB"
-      - name: Debug OIDC claims
-        uses: github/actions-oidc-debugger@main
-
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Update kubeconfig for EKS
-        run: |
-          aws eks update-kubeconfig \
-          --name "${{ secrets.EKS_CLUSTER_NAME }}" \
-          --region "${{ env.AWS_REGION }}"
-
-       - name: Verify EKS access
-        run: |
-          kubectl get nodes
-          kubectl get ns
 
       - name: Login to ECR
         id: login-ecr
@@ -192,8 +157,9 @@ jobs:
           build_scan_push() {
             local SERVICE=$1
             local IMG="${REGISTRY}/task-management/${SERVICE}"
+
             echo "==> Building ${SERVICE}"
-            # --load so the image is available locally for Trivy before we push
+
             docker buildx build \
               --platform linux/amd64 \
               --load \
@@ -201,9 +167,8 @@ jobs:
               -t "${IMG}:latest" \
               "./${SERVICE}"
 
-            echo "==> Trivy scan ${SERVICE} (advisory: HIGH,CRITICAL)"
-            # exit-code 0 = report only. Set --exit-code 1 to BLOCK pushes on
-            # HIGH/CRITICAL findings (allowlist accepted CVEs in .trivyignore).
+            echo "==> Trivy scan ${SERVICE}"
+
             trivy image \
               --severity HIGH,CRITICAL \
               --exit-code 0 \
@@ -211,105 +176,120 @@ jobs:
               "${IMG}:${SHA}"
 
             echo "==> Pushing ${SERVICE}"
+
             docker push "${IMG}:${SHA}"
             docker push "${IMG}:latest"
+
             echo "==> Pushed ${SERVICE}:${SHA}"
           }
 
-          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]];             then build_scan_push frontend;             fi
-          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]];         then build_scan_push user-service;         fi
-          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]];         then build_scan_push task-service;         fi
-          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then build_scan_push notification-service; fi
-          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]];    then build_scan_push analytics-service;    fi
+          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
+            build_scan_push frontend
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
+            build_scan_push user-service
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
+            build_scan_push task-service
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
+            build_scan_push notification-service
+          fi
+
+          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
+            build_scan_push analytics-service
+          fi
 
   # ---- 4. Deploy to EKS -----------------------------------------------------
- deploy:
-  needs: [detect-changes, build-push]
+     deploy:
+    needs: [detect-changes, build-push]
 
-  if: |
-    always() &&
-    needs.detect-changes.result == 'success' &&
-    (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') &&
-    (
-      needs.detect-changes.outputs.any-service == 'true' ||
-      needs.detect-changes.outputs.k8s == 'true'
-    )
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') &&
+      (
+        needs.detect-changes.outputs.any-service == 'true' ||
+        needs.detect-changes.outputs.k8s == 'true'
+      )
 
-  runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
 
-  permissions:
-    id-token: write
-    contents: read
+    permissions:
+      id-token: write
+      contents: read
 
-  steps:
-    - uses: actions/checkout@v7
+    steps:
+      - uses: actions/checkout@v7
 
-    - name: Configure AWS credentials via OIDC
-      uses: aws-actions/configure-aws-credentials@v6.2.3
-      with:
-        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-        aws-region: ${{ env.AWS_REGION }}
-        role-session-name: EKS-Deploy
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v6.2.3
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: EKS-Deploy
 
-    - name: Verify AWS identity
-      run: |
-        aws sts get-caller-identity
+      - name: Verify AWS identity
+        run: |
+          aws sts get-caller-identity
 
-    - name: Update kubeconfig for EKS
-      run: |
-        aws eks update-kubeconfig \
-          --name "${{ secrets.EKS_CLUSTER_NAME }}" \
-          --region "${{ env.AWS_REGION }}"
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+            --region "${{ env.AWS_REGION }}"
 
-    - name: Verify EKS access
-      run: |
-        kubectl get nodes
-        kubectl get ns
+      - name: Verify EKS access
+        run: |
+          kubectl get nodes
+          kubectl get ns
 
-    - name: Set up Kustomize
-      run: |
-        curl -sfLo kustomize.tar.gz \
-          https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
-        tar -xzf kustomize.tar.gz
-        sudo mv kustomize /usr/local/bin/
+      - name: Set up Kustomize
+        run: |
+          curl -sfLo kustomize.tar.gz \
+            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
+          tar -xzf kustomize.tar.gz
+          sudo mv kustomize /usr/local/bin/
 
-    - name: Update image tags for changed services
-      run: |
-        REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-        SHA="${{ github.sha }}"
+      - name: Update image tags for changed services
+        run: |
+          REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+          SHA="${{ github.sha }}"
 
-        cd k8s
+          cd k8s
 
-        if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
-          kustomize edit set image task-management/frontend=${REGISTRY}/task-management/frontend:${SHA}
-        fi
+          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
+            kustomize edit set image task-management/frontend=${REGISTRY}/task-management/frontend:${SHA}
+          fi
 
-        if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
-          kustomize edit set image task-management/user-service=${REGISTRY}/task-management/user-service:${SHA}
-        fi
+          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
+            kustomize edit set image task-management/user-service=${REGISTRY}/task-management/user-service:${SHA}
+          fi
 
-        if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
-          kustomize edit set image task-management/task-service=${REGISTRY}/task-management/task-service:${SHA}
-        fi
+          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
+            kustomize edit set image task-management/task-service=${REGISTRY}/task-management/task-service:${SHA}
+          fi
 
-        if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
-          kustomize edit set image task-management/notification-service=${REGISTRY}/task-management/notification-service:${SHA}
-        fi
+          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
+            kustomize edit set image task-management/notification-service=${REGISTRY}/task-management/notification-service:${SHA}
+          fi
 
-        if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
-          kustomize edit set image task-management/analytics-service=${REGISTRY}/task-management/analytics-service:${SHA}
-        fi
+          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
+            kustomize edit set image task-management/analytics-service=${REGISTRY}/task-management/analytics-service:${SHA}
+          fi
 
-    - name: Apply to EKS
-      run: |
-        kubectl apply -k k8s/ --validate=false
+      - name: Apply to EKS
+        run: |
+          kubectl apply -k k8s/ --validate=false
 
-    - name: Verify rollouts
-      run: |
-        for SERVICE in frontend user-service task-service notification-service analytics-service; do
-          echo "==> Checking rollout: ${SERVICE}"
-          kubectl rollout status deployment/${SERVICE} \
-            -n task-management \
-            --timeout=180s
-        done
-        
+      - name: Verify rollouts
+        run: |
+          for SERVICE in frontend user-service task-service notification-service analytics-service; do
+            echo "==> Checking rollout: ${SERVICE}"
+            kubectl rollout status deployment/${SERVICE} \
+              -n task-management \
+              --timeout=180s
+          done
