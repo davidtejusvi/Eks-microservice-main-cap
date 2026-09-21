@@ -21,17 +21,17 @@ resources:
 # CI updates these tags via: kustomize edit set image task-management/<service>=<ecr-url>:<sha>
 images:
   - name: task-management/frontend
-    newName: 992189742322.dkr.ecr.ap-south-1.amazonaws.com/task-management/frontend
+    newName: 919006484182.dkr.ecr.ap-south-1.amazonaws.com/task-management/frontend
     newTag: latest
   - name: task-management/user-service
-    newName: 992189742322.dkr.ecr.ap-south-1.amazonaws.com/task-management/user-service
+    newName: 919006484182.dkr.ecr.ap-south-1.amazonaws.com/task-management/user-service
     newTag: latest
   - name: task-management/task-service
-    newName: 992189742322.dkr.ecr.ap-south-1.amazonaws.com/task-management/task-service
+    newName: 919006484182.dkr.ecr.ap-south-1.amazonaws.com/task-management/task-service
     newTag: latest
   - name: task-management/notification-service
-    newName: 992189742322.dkr.ecr.ap-south-1.amazonaws.com/task-management/notification-service
+    newName: 919006484182.dkr.ecr.ap-south-1.amazonaws.com/task-management/notification-service
     newTag: latest
   - name: task-management/analytics-service
-    newName: 992189742322.dkr.ecr.ap-south-1.amazonaws.com/task-management/analytics-service
+    newName: 919006484182.dkr.ecr.ap-south-1.amazonaws.com/task-management/analytics-service
     newTag: latest
