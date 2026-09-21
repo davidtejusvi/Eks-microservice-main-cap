@@ -154,7 +154,8 @@ jobs:
               echo "Event: $GITHUB_EVENT_NAME"
               echo "Workflow: $GITHUB_WORKFLOW"
               echo "Job: $GITHUB_JOB"
-
+      - name: Debug OIDC claims
+        uses: github/actions-oidc-debugger@main
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v6.2.3
