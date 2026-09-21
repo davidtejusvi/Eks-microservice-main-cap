@@ -55,9 +55,9 @@ spec:
             - name: EMAIL_PROVIDER
               value: "ses"
             - name: SES_FROM_EMAIL
-              value: "avizway@gmail.com"
+              value: "davidtejusvi@gmail.com"
             - name: TASK_OWNER_EMAIL
-              value: "077avinashreddy@gmail.com"
+              value: "davidtej22@gmail.com"
             - name: AWS_REGION
               value: "ap-south-1"
             - name: OTEL_SERVICE_NAME
