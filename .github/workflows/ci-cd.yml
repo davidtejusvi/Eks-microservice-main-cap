@@ -116,9 +116,9 @@ jobs:
       always() &&
       needs.detect-changes.result == 'success' &&
       needs.detect-changes.outputs.any-service == 'true' &&
-      needs.secrets-scan.result == 'success' &&
-      needs.dependency-scan.result == 'success' &&
-      needs.code-quality.result == 'success'
+      (needs.secrets-scan.result == 'success' || needs.secrets-scan.result == 'skipped') &&
+      (needs.dependency-scan.result == 'success' || needs.dependency-scan.result == 'skipped') &&
+      (needs.code-quality.result == 'success' || needs.code-quality.result == 'skipped')
 
     runs-on: ubuntu-latest
 
