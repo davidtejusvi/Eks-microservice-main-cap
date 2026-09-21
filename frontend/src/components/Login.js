@@ -72,7 +72,7 @@ function Login() {
             <Box sx={{ textAlign: 'center', color: 'white', mb: 4 }}>
               <Box
                 component="img"
-                src="/logo.png"
+                src="/ca.png"
                 alt="Task Management Logo"
                 sx={{
                   height: 120,
@@ -85,7 +85,7 @@ function Login() {
                 Task Manager
               </Typography>
               <Typography variant="body1" sx={{ opacity: 0.7, mb: 1, letterSpacing: 2, textTransform: 'uppercase', fontSize: '0.85rem' }}>
-                Built by Aviz Academy
+                Built by CA Academy
               </Typography>
               <Typography variant="h5" sx={{ opacity: 0.9, mb: 4 }}>
                 Streamline your workflow with our powerful task management system
@@ -120,9 +120,9 @@ function Login() {
                   </Typography>
                 </Box>
 
-                <Tabs 
-                  value={tab} 
-                  onChange={(e, newValue) => setTab(newValue)} 
+                <Tabs
+                  value={tab}
+                  onChange={(e, newValue) => setTab(newValue)}
                   centered
                   sx={{ mb: 3 }}
                 >
@@ -163,8 +163,8 @@ function Login() {
                       fullWidth
                       variant="contained"
                       disabled={loading}
-                      sx={{ 
-                        py: 1.5, 
+                      sx={{
+                        py: 1.5,
                         fontSize: '1.1rem',
                         background: 'linear-gradient(45deg, #2563eb 30%, #3b82f6 90%)',
                         '&:hover': {
@@ -233,8 +233,8 @@ function Login() {
                       fullWidth
                       variant="contained"
                       disabled={loading}
-                      sx={{ 
-                        py: 1.5, 
+                      sx={{
+                        py: 1.5,
                         fontSize: '1.1rem',
                         background: 'linear-gradient(45deg, #7c3aed 30%, #8b5cf6 90%)',
                         '&:hover': {
