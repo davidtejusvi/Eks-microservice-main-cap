@@ -111,7 +111,13 @@ jobs:
   # ---- 3. Build changed services, Trivy-scan, then push to ECR --------------
   build-push:
     needs: [secrets-scan, dependency-scan, code-quality, detect-changes]
-    if: needs.detect-changes.outputs.any-service == 'true'
+    if: |
+      always() &&
+      needs.detect-changes.result == 'success' &&
+      needs.detect-changes.outputs.any-service == 'true' &&
+      needs.secrets-scan.result == 'success' &&
+      needs.dependency-scan.result == 'success' &&
+      needs.code-quality.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
