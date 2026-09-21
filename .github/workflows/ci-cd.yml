@@ -213,66 +213,93 @@ jobs:
           if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]];    then build_scan_push analytics-service;    fi
 
   # ---- 4. Deploy to EKS -----------------------------------------------------
-  deploy:
-    needs: [detect-changes, build-push]
-    # Run when: services were built successfully OR only k8s manifests changed
-    if: |
-      always() &&
-      needs.detect-changes.result == 'success' &&
-      (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') &&
-      (needs.detect-changes.outputs.any-service == 'true' || needs.detect-changes.outputs.k8s == 'true')
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
+ deploy:
+  needs: [detect-changes, build-push]
 
-      - name: Configure AWS credentials via OIDC
-        uses: aws-actions/configure-aws-credentials@v6.2.3
-        with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: EKS-Deploy
+  if: |
+    always() &&
+    needs.detect-changes.result == 'success' &&
+    (needs.build-push.result == 'success' || needs.build-push.result == 'skipped') &&
+    (
+      needs.detect-changes.outputs.any-service == 'true' ||
+      needs.detect-changes.outputs.k8s == 'true'
+    )
 
-      - name: Update kubeconfig for EKS
-        run: |
-          aws eks update-kubeconfig \
-            --name ${{ secrets.EKS_CLUSTER_NAME }} \
-            --region ${{ env.AWS_REGION }}
+  runs-on: ubuntu-latest
 
-      - name: Set up Kustomize
-        run: |
-          curl -sfLo kustomize.tar.gz \
-            https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
-          tar -xzf kustomize.tar.gz
-          sudo mv kustomize /usr/local/bin/
+  permissions:
+    id-token: write
+    contents: read
 
-      - name: Update image tags for changed services
-        run: |
-          REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
-          SHA="${{ github.sha }}"
-          cd k8s
+  steps:
+    - uses: actions/checkout@v7
 
-          if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
-            kustomize edit set image task-management/frontend=${REGISTRY}/task-management/frontend:${SHA}
-          fi
-          if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
-            kustomize edit set image task-management/user-service=${REGISTRY}/task-management/user-service:${SHA}
-          fi
-          if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
-            kustomize edit set image task-management/task-service=${REGISTRY}/task-management/task-service:${SHA}
-          fi
-          if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
-            kustomize edit set image task-management/notification-service=${REGISTRY}/task-management/notification-service:${SHA}
-          fi
-          if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
-            kustomize edit set image task-management/analytics-service=${REGISTRY}/task-management/analytics-service:${SHA}
-          fi
+    - name: Configure AWS credentials via OIDC
+      uses: aws-actions/configure-aws-credentials@v6.2.3
+      with:
+        role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+        aws-region: ${{ env.AWS_REGION }}
+        role-session-name: EKS-Deploy
 
-      - name: Apply to EKS
-        run: kubectl apply -k k8s/ --validate=false
+    - name: Verify AWS identity
+      run: |
+        aws sts get-caller-identity
 
-      - name: Verify rollouts
-        run: |
-          for SERVICE in frontend user-service task-service notification-service analytics-service; do
-            echo "==> Checking rollout: ${SERVICE}"
-            kubectl rollout status deployment/${SERVICE} -n task-management --timeout=180s
-          done
+    - name: Update kubeconfig for EKS
+      run: |
+        aws eks update-kubeconfig \
+          --name "${{ secrets.EKS_CLUSTER_NAME }}" \
+          --region "${{ env.AWS_REGION }}"
+
+    - name: Verify EKS access
+      run: |
+        kubectl get nodes
+        kubectl get ns
+
+    - name: Set up Kustomize
+      run: |
+        curl -sfLo kustomize.tar.gz \
+          https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.3.0/kustomize_v5.3.0_linux_amd64.tar.gz
+        tar -xzf kustomize.tar.gz
+        sudo mv kustomize /usr/local/bin/
+
+    - name: Update image tags for changed services
+      run: |
+        REGISTRY="${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com"
+        SHA="${{ github.sha }}"
+
+        cd k8s
+
+        if [[ "${{ needs.detect-changes.outputs.frontend }}" == "true" ]]; then
+          kustomize edit set image task-management/frontend=${REGISTRY}/task-management/frontend:${SHA}
+        fi
+
+        if [[ "${{ needs.detect-changes.outputs.user-service }}" == "true" ]]; then
+          kustomize edit set image task-management/user-service=${REGISTRY}/task-management/user-service:${SHA}
+        fi
+
+        if [[ "${{ needs.detect-changes.outputs.task-service }}" == "true" ]]; then
+          kustomize edit set image task-management/task-service=${REGISTRY}/task-management/task-service:${SHA}
+        fi
+
+        if [[ "${{ needs.detect-changes.outputs.notification-service }}" == "true" ]]; then
+          kustomize edit set image task-management/notification-service=${REGISTRY}/task-management/notification-service:${SHA}
+        fi
+
+        if [[ "${{ needs.detect-changes.outputs.analytics-service }}" == "true" ]]; then
+          kustomize edit set image task-management/analytics-service=${REGISTRY}/task-management/analytics-service:${SHA}
+        fi
+
+    - name: Apply to EKS
+      run: |
+        kubectl apply -k k8s/ --validate=false
+
+    - name: Verify rollouts
+      run: |
+        for SERVICE in frontend user-service task-service notification-service analytics-service; do
+          echo "==> Checking rollout: ${SERVICE}"
+          kubectl rollout status deployment/${SERVICE} \
+            -n task-management \
+            --timeout=180s
+        done
+        
