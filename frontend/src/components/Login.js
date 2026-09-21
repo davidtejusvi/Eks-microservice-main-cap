@@ -254,7 +254,7 @@ function Login() {
         {/* Footer branding */}
         <Box sx={{ textAlign: 'center', mt: 6 }}>
           <Typography variant="body2" sx={{ color: 'rgba(255,255,255,0.6)' }}>
-            Aviz Academy Capstone Project | EKS Microservices Demo
+            CA Academy Capstone Project | EKS Microservices Demo
           </Typography>
         </Box>
       </Container>
